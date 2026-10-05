@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.39.3';
-const DEPLOY_TIME = '20261005.1853';
+const APP_VERSION = '1.39.4';
+const DEPLOY_TIME = '20261005.1903';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -2410,6 +2410,29 @@ function buildCrossFactionVariantTable(chassisName, eraYear, highlightFaction) {
   // Sort variants alphabetically
   const sortedVariants = Object.entries(variants).sort((a, b) => a[0].localeCompare(b[0]));
   
+  // Build chassis weight lookup for absolute variant weight resolution
+  // Variant weights can be offsets (plain numbers) relative to chassis weight,
+  // or absolute weights (arrays/objects like chassis weights). When offset,
+  // we add variant offset + chassis average to get the absolute value.
+  let chassisWeights = {};
+  if (!isFamily) {
+    chassisWeights = eraData[chassisName]?.w || {};
+  } else {
+    // For families, merge chassis weights from all members
+    for (const fam of DATA.families) {
+      if (fam.enabled &&
+          (fam.groupName.replace(/ Family$/, '') === chassisName ||
+           fam.groupName === chassisName)) {
+        for (const member of fam.chassis) {
+          if (eraData[member]?.w) {
+            chassisWeights = { ...chassisWeights, ...eraData[member].w };
+          }
+        }
+        break;
+      }
+    }
+  }
+  
   let html = '<div class="drilldown-section"><h4 class="drilldown-section-title">Cross-Faction Comparison</h4>';
   html += '<div class="xotl-comparison-wrapper"><table class="data-table xotl-comparison-table"><thead><tr><th>Variant</th>';
   for (const fCode of sortedFactions) {
@@ -2426,7 +2449,15 @@ function buildCrossFactionVariantTable(chassisName, eraYear, highlightFaction) {
       if (rawW === undefined || rawW === null) {
         html += '<td class="xotl-avail-cell na">—</td>';
       } else {
-        const resolved = resolveWeight(rawW, null);
+        // If variant weight is a plain number (offset), resolve against chassis weight
+        let resolved;
+        if (typeof rawW === 'number') {
+          const chassisRaw = chassisWeights[fCode];
+          const chassisAvg = chassisRaw != null ? resolveWeight(chassisRaw, null) : 0;
+          resolved = Math.max(0, chassisAvg + rawW);
+        } else {
+          resolved = resolveWeight(rawW, null);
+        }
         const val = Math.round(resolved * 10) / 10;
         const cls = xotlAvailClass(val);
         html += `<td class="xotl-avail-cell ${cls}">${val.toFixed(1)}</td>`;
