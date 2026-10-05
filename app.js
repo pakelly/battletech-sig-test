@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.39.2';
-const DEPLOY_TIME = '20261005.1531';
+const APP_VERSION = '1.39.3';
+const DEPLOY_TIME = '20261005.1853';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -2377,60 +2377,52 @@ function buildCrossFactionVariantTable(chassisName, eraYear, highlightFaction) {
   if (!variants || Object.keys(variants).length === 0) return '';
   
   // Collect all factions that have data for any variant, filtered to playable
+  // Note: faction weights are decoded from numeric IDs to faction codes on load
+  // (see decodeFactionIndex), so variant weight keys are faction codes like 'FS', 'DC'
   const playable = new Set(
     Object.entries(DATA.factions)
       .filter(([, f]) => f.tags?.includes('PLAYABLE'))
       .map(([code]) => code)
   );
   
-  const factionIds = new Set(); // numeric IDs
+  const factionCodes = new Set();
   for (const [, vData] of Object.entries(variants)) {
     const w = vData.w || vData;
-    for (const fId of Object.keys(w)) {
-      const fCode = DATA.factionIndex[parseInt(fId)];
-      if (fCode && playable.has(fCode)) {
-        factionIds.add(fId);
+    for (const fCode of Object.keys(w)) {
+      if (playable.has(fCode)) {
+        factionCodes.add(fCode);
       }
     }
   }
   
-  if (factionIds.size === 0) return '';
+  if (factionCodes.size === 0) return '';
   
-  // Sort factions: major IS houses first, then Clan, then Periphery, then minor
-  const factionOrder = [];
-  const sortedIds = [...factionIds].sort((a, b) => {
-    const codeA = DATA.factionIndex[parseInt(a)];
-    const codeB = DATA.factionIndex[parseInt(b)];
-    const fA = DATA.factions[codeA] || {};
-    const fB = DATA.factions[codeB] || {};
-    
-    // Sort: IS non-periphery first, then Clan, then Periphery
+  // Sort factions: IS non-periphery first, then Clan, then Periphery
+  const sortedFactions = [...factionCodes].sort((a, b) => {
+    const fA = DATA.factions[a] || {};
+    const fB = DATA.factions[b] || {};
     const rankA = fA.clan ? 1 : (fA.periphery ? 2 : 0);
     const rankB = fB.clan ? 1 : (fB.periphery ? 2 : 0);
     if (rankA !== rankB) return rankA - rankB;
-    return (fA.fullName || fA.name || codeA).localeCompare(fB.fullName || fB.name || codeB);
+    return (fA.fullName || fA.name || a).localeCompare(fB.fullName || fB.name || b);
   });
-  
-  for (const fId of sortedIds) {
-    factionOrder.push({ id: fId, code: DATA.factionIndex[parseInt(fId)] });
-  }
   
   // Sort variants alphabetically
   const sortedVariants = Object.entries(variants).sort((a, b) => a[0].localeCompare(b[0]));
   
   let html = '<div class="drilldown-section"><h4 class="drilldown-section-title">Cross-Faction Comparison</h4>';
   html += '<div class="xotl-comparison-wrapper"><table class="data-table xotl-comparison-table"><thead><tr><th>Variant</th>';
-  for (const { code } of factionOrder) {
-    const highlight = code === highlightFaction ? ' style="background:var(--heat-3)"' : '';
-    html += `<th${highlight}>${escHtml(code)}</th>`;
+  for (const fCode of sortedFactions) {
+    const highlight = fCode === highlightFaction ? ' style="background:var(--heat-3)"' : '';
+    html += `<th${highlight}>${escHtml(fCode)}</th>`;
   }
   html += '</tr></thead><tbody>';
   
   for (const [varName, vData] of sortedVariants) {
     const w = vData.w || vData;
     html += `<tr><td><strong>${escHtml(varName)}</strong></td>`;
-    for (const { id, code } of factionOrder) {
-      const rawW = w[id];
+    for (const fCode of sortedFactions) {
+      const rawW = w[fCode];
       if (rawW === undefined || rawW === null) {
         html += '<td class="xotl-avail-cell na">—</td>';
       } else {
