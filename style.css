@@ -1961,6 +1961,11 @@ details[open] > .help-section-title::before {
   font-size: 0.8rem;
 }
 
+.xotl-comparison-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .xotl-comparison-table th,
 .xotl-comparison-table td {
   padding: 0.3rem 0.5rem;

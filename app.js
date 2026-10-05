@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.39.0';
-const DEPLOY_TIME = '20261005.1448';
+const APP_VERSION = '1.39.1';
+const DEPLOY_TIME = '20261005.1457';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -2334,6 +2334,120 @@ function getSubFactionData(chassisNames, faction, eraYear) {
 }
 
 /**
+ * Build a cross-faction variant comparison table for Mode A/B.
+ * Shows each variant's resolved average weight per faction.
+ * @param {string} chassisName - Display name (may be a family name)
+ * @param {string} eraYear - Era year string
+ * @param {string|null} highlightFaction - Faction code to highlight
+ * @returns {string} HTML for the comparison table section
+ */
+function buildCrossFactionVariantTable(chassisName, eraYear, highlightFaction) {
+  const eraData = DATA.eraData[String(eraYear)];
+  if (!eraData) return '';
+  
+  // Collect variants from the chassis (or family)
+  let variants = null;
+  let isFamily = false;
+  for (const fam of DATA.families) {
+    if (fam.enabled &&
+        (fam.groupName.replace(/ Family$/, '') === chassisName ||
+         fam.groupName === chassisName)) {
+      isFamily = true;
+      for (const member of fam.chassis) {
+        if (eraData[member]?.v) {
+          variants = { ...(variants || {}), ...eraData[member].v };
+        }
+      }
+      break;
+    }
+  }
+  if (!isFamily) {
+    if (eraData[chassisName]?.v) {
+      variants = eraData[chassisName].v;
+    } else {
+      // Check family member match
+      for (const [cn, data] of Object.entries(eraData)) {
+        if (data.fam && data.fam.replace(/ Family$/, '') === chassisName) {
+          if (data.v) variants = { ...(variants || {}), ...data.v };
+        }
+      }
+    }
+  }
+  
+  if (!variants || Object.keys(variants).length === 0) return '';
+  
+  // Collect all factions that have data for any variant, filtered to playable
+  const playable = new Set(
+    Object.entries(DATA.factions)
+      .filter(([, f]) => f.tags?.includes('PLAYABLE'))
+      .map(([code]) => code)
+  );
+  
+  const factionIds = new Set(); // numeric IDs
+  for (const [, vData] of Object.entries(variants)) {
+    const w = vData.w || vData;
+    for (const fId of Object.keys(w)) {
+      const fCode = DATA.factionIndex[parseInt(fId)];
+      if (fCode && playable.has(fCode)) {
+        factionIds.add(fId);
+      }
+    }
+  }
+  
+  if (factionIds.size === 0) return '';
+  
+  // Sort factions: major IS houses first, then Clan, then Periphery, then minor
+  const factionOrder = [];
+  const sortedIds = [...factionIds].sort((a, b) => {
+    const codeA = DATA.factionIndex[parseInt(a)];
+    const codeB = DATA.factionIndex[parseInt(b)];
+    const fA = DATA.factions[codeA] || {};
+    const fB = DATA.factions[codeB] || {};
+    
+    // Sort: IS non-periphery first, then Clan, then Periphery
+    const rankA = fA.clan ? 1 : (fA.periphery ? 2 : 0);
+    const rankB = fB.clan ? 1 : (fB.periphery ? 2 : 0);
+    if (rankA !== rankB) return rankA - rankB;
+    return (fA.fullName || fA.name || codeA).localeCompare(fB.fullName || fB.name || codeB);
+  });
+  
+  for (const fId of sortedIds) {
+    factionOrder.push({ id: fId, code: DATA.factionIndex[parseInt(fId)] });
+  }
+  
+  // Sort variants alphabetically
+  const sortedVariants = Object.entries(variants).sort((a, b) => a[0].localeCompare(b[0]));
+  
+  let html = '<div class="drilldown-section"><h4 class="drilldown-section-title">Cross-Faction Comparison</h4>';
+  html += '<div class="xotl-comparison-wrapper"><table class="data-table xotl-comparison-table"><thead><tr><th>Variant</th>';
+  for (const { code } of factionOrder) {
+    const highlight = code === highlightFaction ? ' style="background:var(--heat-3)"' : '';
+    html += `<th${highlight}>${escHtml(code)}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+  
+  for (const [varName, vData] of sortedVariants) {
+    const w = vData.w || vData;
+    html += `<tr><td><strong>${escHtml(varName)}</strong></td>`;
+    for (const { id, code } of factionOrder) {
+      const rawW = w[id];
+      if (rawW === undefined || rawW === null) {
+        html += '<td class="xotl-avail-cell na">—</td>';
+      } else {
+        const resolved = resolveWeight(rawW, null);
+        const val = Math.round(resolved * 10) / 10;
+        const cls = xotlAvailClass(val);
+        html += `<td class="xotl-avail-cell ${cls}">${val.toFixed(1)}</td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div></div>';
+  
+  return html;
+}
+
+/**
  * Mode X variant drill-down: shows Xotl variant availability and cross-faction comparison.
  */
 function showVariantsXotl(chassisName, faction, eraYear, overlay, title, content) {
@@ -2582,6 +2696,12 @@ function showVariants(chassisName, faction, eraYear) {
     }
     html += '</div>';
     
+    // ── Cross-Faction Variant Comparison ──
+    const crossFactionHtml = buildCrossFactionVariantTable(chassisName, eraYear, null);
+    if (crossFactionHtml) {
+      html += crossFactionHtml;
+    }
+    
     content.innerHTML = html;
     overlay.classList.remove('hidden');
     
@@ -2801,6 +2921,12 @@ function showVariants(chassisName, faction, eraYear) {
       `;
     }
     html += '</div>';
+  }
+  
+  // ── Cross-Faction Variant Comparison ──
+  const crossFactionHtml = buildCrossFactionVariantTable(chassisName, eraYear, faction);
+  if (crossFactionHtml) {
+    html += crossFactionHtml;
   }
   
   content.innerHTML = html;
