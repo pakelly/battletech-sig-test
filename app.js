@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.39.1';
-const DEPLOY_TIME = '20261005.1457';
+const APP_VERSION = '1.39.2';
+const DEPLOY_TIME = '20261005.1503';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -2519,56 +2519,56 @@ function showVariantsXotl(chassisName, faction, eraYear, overlay, title, content
   title.textContent = `${chassisName} — ${getFactionFullName(faction)} (Xotl)`;
   let html = '';
   
-  // Section 1: Variant Availability for this faction
+  // Section 1: Variant Distribution for this faction
   const factionVariants = getXotlVariantData(chassisName, faction, eraYear);
   
   if (factionVariants.length === 0) {
     html += `<div class="drilldown-section"><p class="drilldown-empty">${escHtml(getFactionFullName(faction))} does not field the ${escHtml(chassisName)} in Xotl's ${xotlEra} tables.</p></div>`;
   } else {
-    // Section 1a: Variant Availability table (raw Av values)
-    html += '<div class="drilldown-section"><h4 class="drilldown-section-title">Variant Availability</h4>';
-    html += '<table class="data-table"><thead><tr><th>Variant</th><th>Availability</th><th>Tonnage</th></tr></thead><tbody>';
+    // Variant Distribution (probability-weighted bar chart with metadata)
+    // Cross-reference role/BV/intro from DATA.eraData where available
+    const eraData = DATA.eraData[String(eraYear)];
+    const chassisEraData = eraData?.[chassisName];
     
-    // Sort by availability desc, then name
-    const sorted = [...factionVariants].sort((a, b) => {
-      if (b.availability !== a.availability) return b.availability - a.availability;
-      return a.name.localeCompare(b.name);
+    const variantProbs = factionVariants.map(v => {
+      const mulVariant = chassisEraData?.v?.[v.variant];
+      const role = mulVariant ? resolveVariantRole(chassisName, v.variant, mulVariant.role) : null;
+      const bv = mulVariant?.bv != null ? mulVariant.bv : null;
+      const intro = mulVariant?.intro != null ? mulVariant.intro : null;
+      return {
+        variant: v.variant,
+        prob: xotlToProb(v.availability),
+        tonnage: v.tonnage,
+        role: role || '',
+        bv: bv,
+        intro: intro
+      };
     });
     
-    for (const v of sorted) {
-      const cls = xotlAvailClass(v.availability);
-      html += `<tr><td><strong>${escHtml(v.variant)}</strong></td>`;
-      html += `<td class="xotl-avail-cell ${cls}">${v.availability}</td>`;
-      html += `<td class="stat-col">${v.tonnage || '—'}</td></tr>`;
-    }
-    html += '</tbody></table></div>';
+    // Sort by probability desc
+    variantProbs.sort((a, b) => b.prob - a.prob);
     
-    // Section 1b: Variant Distribution (probability-weighted bar chart)
-    // Each variant's share = xotlToProb(Av) / sum(all variants' xotlToProb)
-    const variantProbs = factionVariants.map(v => ({
-      variant: v.variant,
-      prob: xotlToProb(v.availability),
-      tonnage: v.tonnage
-    }));
+    // Always show the distribution chart (even for single variants — shows 100%)
     const probTotal = variantProbs.reduce((s, v) => s + v.prob, 0);
-    
-    if (variantProbs.length > 1 && probTotal > 0) {
-      variantProbs.sort((a, b) => b.prob - a.prob);
-      html += '<div class="drilldown-section"><h4 class="drilldown-section-title">Variants</h4>';
-      for (const v of variantProbs) {
-        const pct = (v.prob / probTotal * 100).toFixed(1);
-        html += `
-          <div class="variant-row">
-            <span class="variant-name">${escHtml(v.variant)}</span>
-            <div class="variant-bar-container">
-              <div class="variant-bar" style="width:${pct}%"></div>
-            </div>
-            <span class="variant-pct">${pct}%</span>
+    html += '<div class="drilldown-section"><h4 class="drilldown-section-title">Variants</h4>';
+    for (const v of variantProbs) {
+      const pct = probTotal > 0 ? (v.prob / probTotal * 100).toFixed(1) : '0.0';
+      const bvStr = v.bv != null ? `<span class="variant-bv">BV ${v.bv}</span>` : '';
+      const introStr = v.intro != null ? `<span class="variant-intro">${v.intro}</span>` : '';
+      const roleStr = `<span class="variant-role variant-role-btn" data-chassis="${escAttr(chassisName)}" data-variant="${escAttr(v.variant)}" data-role="${escAttr(v.role)}" title="Click to change role">${escHtml(v.role || 'None')}</span>`;
+      const metaStr = `<span class="variant-meta">${roleStr}${bvStr}${introStr}</span>`;
+      html += `
+        <div class="variant-row">
+          <span class="variant-name">${escHtml(v.variant)}</span>
+          ${metaStr}
+          <div class="variant-bar-container">
+            <div class="variant-bar" style="width:${pct}%"></div>
           </div>
-        `;
-      }
-      html += '</div>';
+          <span class="variant-pct">${pct}%</span>
+        </div>
+      `;
     }
+    html += '</div>';
   }
   
   // Section 2: Cross-Faction Comparison
@@ -2606,6 +2606,15 @@ function showVariantsXotl(chassisName, faction, eraYear, overlay, title, content
   
   content.innerHTML = html;
   overlay.classList.remove('hidden');
+  
+  // Wire up variant role reassignment buttons (same as Mode A/B)
+  content.querySelectorAll('.variant-role-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.role-dropdown').forEach(d => d.remove());
+      showRoleDropdown(btn);
+    });
+  });
 }
 
 function showVariants(chassisName, faction, eraYear) {
