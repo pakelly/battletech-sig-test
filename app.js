@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.39.5';
-const DEPLOY_TIME = '20261005.2228';
+const APP_VERSION = '1.39.6';
+const DEPLOY_TIME = '20261005.2232';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -2450,13 +2450,11 @@ function buildCrossFactionVariantTable(chassisName, eraYear, highlightFaction) {
         html += '<td class="xotl-avail-cell na">—</td>';
       } else {
         // If variant weight is a plain number (offset), resolve against chassis weight
-        // Variant offsets are log-scale (2^(w/2) multiplies chassis weight in prob space)
-        // For display, clamp the resolved absolute value to 0-10
         let resolved;
         if (typeof rawW === 'number') {
           const chassisRaw = chassisWeights[fCode];
           const chassisAvg = chassisRaw != null ? resolveWeight(chassisRaw, null) : 0;
-          resolved = Math.max(0, Math.min(10, chassisAvg + rawW));
+          resolved = Math.max(0, chassisAvg + rawW);
         } else {
           resolved = resolveWeight(rawW, null);
         }
