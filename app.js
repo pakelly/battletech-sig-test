@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.38.1';
-const DEPLOY_TIME = '20261003.2124';
+const APP_VERSION = '1.39.0';
+const DEPLOY_TIME = '20261005.1448';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -76,10 +76,10 @@ function buildXotlWeights(chassisName, eraYear, xotl) {
 }
 
 /**
- * Build per-faction probability weights for Mode X by summing xotlToProb
- * across all variants. Unlike buildXotlWeights (which takes max Av for display),
- * this sums variant probabilities — a faction fielding 3 variants of a chassis
- * gets more share-of-force than one fielding 1.
+ * Build per-faction probability weights for Mode X using MAX variant probability.
+ * Chassis weight = xotlToProb(highest single variant Av) for each faction.
+ * This prevents chassis with many common variants from dominating share-of-force.
+ * Variant distribution within a chassis is computed separately for the detail view.
  */
 function buildXotlProbWeights(chassisName, eraYear, xotl) {
   const xotlEra = XOTL_ERA_MAP[eraYear];
@@ -90,7 +90,7 @@ function buildXotlProbWeights(chassisName, eraYear, xotl) {
   const weights = {};
   for (const mech of matching) {
     const variantCode = xotlVariantCode(chassisName, mech);
-    if (seen.has(variantCode)) continue; // skip duplicate — don't double-count
+    if (seen.has(variantCode)) continue; // skip duplicate
     seen.add(variantCode);
     for (const [sectionName, eraData] of Object.entries(mech.sections || {})) {
       const baseName = sectionName.includes(':') ? sectionName.split(':')[0].trim() : sectionName;
@@ -98,7 +98,11 @@ function buildXotlProbWeights(chassisName, eraYear, xotl) {
       if (!factionCode) continue;
       const value = getXotlColumnValue(eraData, xotlEra);
       if (value == null) continue;
-      weights[factionCode] = (weights[factionCode] || 0) + xotlToProb(value);
+      // Take max variant probability per faction, not sum
+      const prob = xotlToProb(value);
+      if (weights[factionCode] == null || prob > weights[factionCode]) {
+        weights[factionCode] = prob;
+      }
     }
   }
   return weights;
@@ -2407,6 +2411,7 @@ function showVariantsXotl(chassisName, faction, eraYear, overlay, title, content
   if (factionVariants.length === 0) {
     html += `<div class="drilldown-section"><p class="drilldown-empty">${escHtml(getFactionFullName(faction))} does not field the ${escHtml(chassisName)} in Xotl's ${xotlEra} tables.</p></div>`;
   } else {
+    // Section 1a: Variant Availability table (raw Av values)
     html += '<div class="drilldown-section"><h4 class="drilldown-section-title">Variant Availability</h4>';
     html += '<table class="data-table"><thead><tr><th>Variant</th><th>Availability</th><th>Tonnage</th></tr></thead><tbody>';
     
@@ -2418,11 +2423,38 @@ function showVariantsXotl(chassisName, faction, eraYear, overlay, title, content
     
     for (const v of sorted) {
       const cls = xotlAvailClass(v.availability);
-      html += `<tr><td><strong>${escHtml(v.name)}</strong></td>`;
+      html += `<tr><td><strong>${escHtml(v.variant)}</strong></td>`;
       html += `<td class="xotl-avail-cell ${cls}">${v.availability}</td>`;
       html += `<td class="stat-col">${v.tonnage || '—'}</td></tr>`;
     }
     html += '</tbody></table></div>';
+    
+    // Section 1b: Variant Distribution (probability-weighted bar chart)
+    // Each variant's share = xotlToProb(Av) / sum(all variants' xotlToProb)
+    const variantProbs = factionVariants.map(v => ({
+      variant: v.variant,
+      prob: xotlToProb(v.availability),
+      tonnage: v.tonnage
+    }));
+    const probTotal = variantProbs.reduce((s, v) => s + v.prob, 0);
+    
+    if (variantProbs.length > 1 && probTotal > 0) {
+      variantProbs.sort((a, b) => b.prob - a.prob);
+      html += '<div class="drilldown-section"><h4 class="drilldown-section-title">Variants</h4>';
+      for (const v of variantProbs) {
+        const pct = (v.prob / probTotal * 100).toFixed(1);
+        html += `
+          <div class="variant-row">
+            <span class="variant-name">${escHtml(v.variant)}</span>
+            <div class="variant-bar-container">
+              <div class="variant-bar" style="width:${pct}%"></div>
+            </div>
+            <span class="variant-pct">${pct}%</span>
+          </div>
+        `;
+      }
+      html += '</div>';
+    }
   }
   
   // Section 2: Cross-Faction Comparison
