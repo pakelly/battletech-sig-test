@@ -1,7 +1,7 @@
 /* ── BattleTech Faction Signatures — Client App ── */
 
-const APP_VERSION = '1.40.0';
-const DEPLOY_TIME = '20261006.0114';
+const APP_VERSION = '1.40.1';
+const DEPLOY_TIME = '20261006.0119';
 
 let DATA = null; // app-data.json
 let xotlData = null; // xotl-rarity.json (lazy-loaded for Mode X)
@@ -3827,96 +3827,23 @@ async function runQuery() {
   // MegaMek's toProb produces probability-space weights (1.4–32).
   // Normalizing per faction makes prob = share-of-force in both modes.
   {
-    // Pre-pass: compute global faction sums across all era chassis (unfiltered)
+    // Pre-pass: compute global faction sums across all chassis (unfiltered)
+    // chassisData is already family-merged by getChassisForEra, so we iterate it directly.
+    // This mirrors the biased weight computation above but without any filtering.
     const globalFactionSumBw = {};
-    for (const [chName, chData] of Object.entries(eraData)) {
-      // Skip chassis that are part of a family — their weights are merged into the family entry
-      // (they'd be double-counted if summed both individually and as family)
-      const famName = chData.fam || chassisToFamily[chName] || null;
-      if (famName && !disabledFamilies.has(famName)) continue; // family members handled via family entry
-      
-      // Get chassis or family merged data
-      let chassisWeights, chassisRawW, chassisXotlProb, chassisClass;
+    for (const [chName, chData] of Object.entries(chassisData)) {
       const meta = DATA.chassis[chName];
       if (!meta) continue;
-      chassisClass = meta.class;
+      const chassisClass = meta.class;
+      const chassisRawW = chData.w || {};
       
-      if (famName && !disabledFamilies.has(famName)) {
-        // This shouldn't be reached (family members skipped above), but guard anyway
-        continue;
-      }
-      
-      // Check if this chassis name is a family group name in DATA.families
-      let isFamilyGroup = false;
-      for (const fam of DATA.families) {
-        if (fam.enabled &&
-            (fam.groupName.replace(/ Family$/, '') === chName ||
-             fam.groupName === chName)) {
-          isFamilyGroup = true;
-          // Merge weights from all members
-          chassisWeights = {};
-          chassisRawW = {};
-          for (const member of fam.chassis) {
-            const mData = eraData[member];
-            if (!mData) continue;
-            for (const [f, w] of Object.entries(mData.w || {})) {
-              chassisWeights[f] = (chassisWeights[f] || 0) + w;
-            }
-            // Note: rawW merge is imperfect for per-tier entries, but entryToProb
-            // handles individual entries. For the global sum approximation, merged weights are fine.
-          }
-          // Use first member's class
-          const firstMeta = DATA.chassis[fam.chassis[0]];
-          if (firstMeta) chassisClass = firstMeta.class;
-          break;
-        }
-      }
-      
-      if (!isFamilyGroup) {
-        chassisWeights = chData.w || {};
-        chassisRawW = chData.w;
-      }
-      
-      // Compute biased weight for this chassis (same logic as above)
       if (isModeX) {
-        // Mode X: check if chassis has Xotl data
-        let xotlW = null;
-        let xotlProbW = null;
-        // For family groups, use the family name for Xotl lookup
-        const xotlLookupName = isFamilyGroup ? chName : chName;
-        // Check if any member has Xotl data
-        if (isFamilyGroup) {
-          // Aggregate Xotl prob weights from all members
-          xotlProbW = {};
-          for (const fam of DATA.families) {
-            if (fam.enabled &&
-                (fam.groupName.replace(/ Family$/, '') === chName ||
-                 fam.groupName === chName)) {
-              for (const member of fam.chassis) {
-                const memberProb = buildXotlProbWeights(member, eraYear, xotlData);
-                if (memberProb) {
-                  for (const [f, p] of Object.entries(memberProb)) {
-                    // Max across members (consistent with buildXotlWeights taking max)
-                    if (!xotlProbW[f] || p > xotlProbW[f]) xotlProbW[f] = p;
-                  }
-                }
-              }
-              break;
-            }
-          }
-          xotlW = Object.keys(xotlProbW).length > 0 ? {} : null;
-          if (xotlW) {
-            // Build display weights from prob weights for consistency
-            for (const f of Object.keys(xotlProbW)) {
-              xotlW[f] = 1; // non-zero placeholder
-            }
-          }
-        } else {
-          xotlW = buildXotlWeights(xotlLookupName, eraYear, xotlData);
-          xotlProbW = buildXotlProbWeights(xotlLookupName, eraYear, xotlData);
-        }
-        if (xotlW === null) continue; // no Xotl coverage
-        for (const f of Object.keys(xotlProbW || {})) {
+        // Mode X: use Xotl prob weights (max variant per faction)
+        const xotlProbW = buildXotlProbWeights(chName, eraYear, xotlData);
+        if (!xotlProbW) continue;
+        const xotlW = buildXotlWeights(chName, eraYear, xotlData);
+        if (xotlW === null) continue; // no Xotl coverage for this era
+        for (const f of Object.keys(xotlProbW)) {
           const prob = xotlProbW[f];
           if (prob <= 0) continue;
           const mixFactor = getWcdMixingFactor(f, chassisClass, eraYear);
@@ -3924,8 +3851,7 @@ async function runQuery() {
         }
       } else {
         // Mode A/B: use entryToProb + WCD
-        // Mode B: skip factions not in MUL
-        const resolvedWeights = computeResolvedWeights(chassisWeights, ratingIdx);
+        const resolvedWeights = computeResolvedWeights(chassisRawW, ratingIdx);
         for (const f of Object.keys(resolvedWeights)) {
           if (modeB && chData.mul && !chData.mul[f]) {
             if (chData.sf && chData.sf[f]) continue;
@@ -3933,9 +3859,7 @@ async function runQuery() {
           }
           const w = resolvedWeights[f];
           if (w <= 0) continue;
-          const prob = isFamilyGroup
-            ? toProb(w)  // merged weights — use simple toProb
-            : entryToProb(chassisRawW[f] || w, probRatingIdx);
+          const prob = entryToProb(chassisRawW[f] || w, probRatingIdx);
           const mixFactor = getWcdMixingFactor(f, chassisClass, eraYear);
           globalFactionSumBw[f] = (globalFactionSumBw[f] || 0) + (prob * mixFactor);
         }
